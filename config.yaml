@@ -1,0 +1,22 @@
+exchange:
+  name: standx
+  ws_url: "wss://perps.standx.com/ws-stream/v1"
+  ws_api_url: "wss://perps.standx.com/ws-api/v1"
+  # private_key: Moved to .env for security (STANDX_PRIVATE_KEY)
+  chain_id: 56 # BSC
+
+symbol: BTC-USD
+grid:
+  price_spread: 70
+  price_step: 11
+  grid_count: 1
+  order_quantity: 0.001
+
+system_watchdog:
+  timeout_seconds: 120  # Global System Alert Timeout
+  sound_alert: true
+  telegram_alert: true
+
+telegram:
+  # Set your local proxy URL here (e.g. http://127.0.0.1:7890) to ensure TG works even if system proxy is off.
+  proxy_url: "http://127.0.0.1:7897"

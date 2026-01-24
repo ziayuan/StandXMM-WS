@@ -1,0 +1,9 @@
+websockets
+aiohttp
+requests
+pyyaml
+web3
+eth-account
+cryptography
+base58
+python-dotenv
