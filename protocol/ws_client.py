@@ -36,7 +36,9 @@ class StandXPerpWS:
         
         # Callbacks: channel -> function
         self.callbacks: Dict[str, Callable] = {}
+        self.callbacks: Dict[str, Callable] = {}
         self.subscriptions: List[dict] = []
+        self.balance: Dict[str, Any] = {} # Store balance info
         
         # Watchdog
         self.last_data_time = time.time()      # Time of last legitimate WS frame (for System Alert)
@@ -171,6 +173,16 @@ class StandXPerpWS:
         await self.ws_trading.send(json.dumps(msg))
         return request_id
 
+    async def fetch_balance(self):
+        """Fetch account balance via Trading WS."""
+        if not self.ws_trading: return None
+        # Send command and hope for response in handle_message (or just send and let user see log?)
+        # For a true "fetch", we need to wait for response. 
+        # But our architecture is async callback based.
+        # For now, we will send the command. The response will be logged in `[Trading] Msg: ...`
+        # To make it usable in Status Report, we need to store the balance in self.balance state.
+        return await self.send_command("account:state", {})
+
     async def _on_connect_market(self, ws):
         # Market Stream Auth (Token Login)
         try:
@@ -193,6 +205,12 @@ class StandXPerpWS:
             
             logger.info("[Market] Sending Token Login + Subs...")
             await ws.send(json.dumps(login_msg))
+            
+            # Robustness: Send explicit subscribe requests for all channels
+            # This ensures even if 'streams' auth param missed something, we get it.
+            await asyncio.sleep(0.5) 
+            for sub in self.subscriptions:
+                await ws.send(json.dumps(sub))
             
         except Exception as e:
             logger.error(f"[Market] Login failed: {e}")
@@ -261,10 +279,27 @@ class StandXPerpWS:
                      # Log: Position [Symbol] [Size] [Entry]
                      logger.info(f"[Position] {d.get('symbol')} Size: {d.get('qty')} @ {d.get('entry_price')} | PnL: {d.get('realized_pnl')}")
 
+                 elif channel == "balance":
+                     # Log Balance updates to debug
+                     d = data.get("data", {})
+                     logger.info(f"[Balance] Total: {d.get('total')} | Free: {d.get('free')}")
+
             # Debug: Log Trading Responses
             if name == "trading":
-                # Filter out auth success to reduce noise if needed, but for now log ALL
+                # Check for Account State Response (Balance)
+                # Structure guess: {"data": {"balances": [...]}, "request_id": "..."}
+                # Or {"result": ...}
+                # We will log it first.
                 logger.info(f"[Trading] Msg: {data}")
+                
+                # Try to parse balance if it looks like account info
+                # Assuming response to account:state or channel account
+                # This is heuristic until we confirm structure
+                if "balances" in str(data) or "available_balance" in str(data):
+                     res = data.get("data", {}) or data.get("result", {})
+                     if res:
+                         self.balance = res
+                         logger.info(f"[Balance] Updated: {self.balance}")
 
         except Exception as e:
             logger.error(f"[{name}] Parse error: {e}")

@@ -2,11 +2,12 @@ import asyncio
 import time
 import os
 import logging
+import yaml # Added for load_config
 from dotenv import load_dotenv
 from protocol.ws_client import StandXPerpWS
-from protocol.auth import StandXAuth # Ensure this uses the latest fixed version
-from utils.notifier import Notifier
-from utils.config_loader import load_config
+from protocol.auth import StandXAuth 
+from alert.notifier import Notifier # Fixed import path
+# from utils.config_loader import load_config # Removed
 
 # Setup Logging
 logging.basicConfig(
@@ -15,6 +16,12 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 logger = logging.getLogger("Monitor")
+
+def load_config(path="config.yaml"):
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Config not found at {path}")
+    with open(path, 'r') as f:
+        return yaml.safe_load(f)
 
 class PositionMonitor:
     def __init__(self):

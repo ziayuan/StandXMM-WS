@@ -20,6 +20,7 @@ class StandXMarketMaker:
         self.price_step = config['grid']['price_step']
         self.grid_count = config['grid']['grid_count']
         self.order_qty = str(config['grid']['order_quantity'])
+        self.fill_cooldown_minutes = config['grid'].get('fill_cooldown_minutes', 10)
         
         # State
         self.last_price = 0.0
@@ -29,6 +30,7 @@ class StandXMarketMaker:
         self.my_orders_snapshot = [] # List of open orders from WS
         self.is_running = True
         self.resume_time = 0 # Timestamp to resume trading (Cool Down)
+        self.balance_info = {} # Store balance from WS subscription
         
         # Locks
         self.lock = asyncio.Lock()
@@ -39,10 +41,22 @@ class StandXMarketMaker:
             f"📊 **StandX Bot Status**",
             f"Symbol: `{self.symbol}`",
             f"Price: `{self.last_price}`",
-            f"Position: `{self.position_size}`",
+            f"Position: `{self.position_size}`"
+        ]
+        
+        # Add Balance Info from WS subscription
+        if self.balance_info:
+            total = self.balance_info.get("total", "?")
+            free = self.balance_info.get("free", "?")
+            token = self.balance_info.get("token", "")
+            lines.append(f"💰 Balance: `{total}` {token} (Free: `{free}`)")
+        else:
+            lines.append(f"💰 Balance: (Waiting...)")
+             
+        lines.extend([
             f"Running: `{self.is_running}`",
             f"**Pending Orders ({len(self.pending_orders)}):**"
-        ]
+        ])
         
         # Sort by price descending
         sorted_orders = sorted(self.pending_orders.items(), key=lambda x: x[0], reverse=True)
@@ -73,12 +87,18 @@ class StandXMarketMaker:
         
         # Subscribe to Position (for Auto-Close / Risk)
         self.ws.subscribe("position", None, self.on_position)
+        
+        # Subscribe to Balance (for /status command)
+        self.ws.subscribe("balance", None, self.on_balance)
 
-    async def on_trade(self, data: dict):
-        pass
-
-    async def on_depth(self, data: dict):
-        pass
+    async def on_balance(self, data: dict):
+        """Handle balance updates from WS."""
+        try:
+            bal = data.get("data", {})
+            if bal:
+                self.balance_info = bal
+        except Exception as e:
+            logger.error(f"Balance error: {e}")
 
     async def on_price_update(self, data: dict):
         """
@@ -136,7 +156,7 @@ class StandXMarketMaker:
                     self.position_size = size # Track size for Status Report
                     
                     if size != 0:
-                        logger.info(f"Position Detected: {size} {self.symbol}. Auto-Closing...")
+                        logger.warning(f"🔴 Position: {size} | Auto-Closing...")
                         await self._close_position_market(size)
         except Exception as e:
             logger.error(f"Position error: {e} | Data: {str(data)[:100]}")
@@ -154,8 +174,6 @@ class StandXMarketMaker:
             }
             # Cl Ord ID for tracking
             params["cl_ord_id"] = f"close-{int(time.time()*1000)}"
-            
-            logger.info(f"Executing Market Close: PositionOf({size}) -> Action({side} {qty})")
             await self.ws.place_order(params)
         except Exception as e:
             logger.error(f"Close failed: {e}")
@@ -193,12 +211,12 @@ class StandXMarketMaker:
                         
                         if found_price is not None:
                             del self.pending_orders[found_price]
-                            logger.info(f"Order {status}: Cleared {cl_ord_id} @ {found_price}")
 
                 # Logic 3: Pause Logic (Cool Down)
                 if status == "filled":
-                     logger.info("Fill Detected! Pausing strategy for 10 minutes...")
-                     self.resume_time = time.time() + 600
+                     pause_sec = self.fill_cooldown_minutes * 60
+                     logger.warning(f"🟢 FILL! Pausing {self.fill_cooldown_minutes}min...")
+                     self.resume_time = time.time() + pause_sec
                      await self.cancel_all()
                             
         except Exception as e:
@@ -257,11 +275,7 @@ class StandXMarketMaker:
                 if price not in self.pending_orders:
                     to_place.append({"side": "sell", "price": price})
             
-            # Execute Actions
-            if to_cancel or to_place:
-                logger.info(f"Price: {self.last_price} | Cancel: {len(to_cancel)} | Place: {len(to_place)}")
-                # if to_place:
-                #      logger.info(f"Targets To Place: {to_place}")
+            # Execute Actions (Silent - only log fills/errors)
             
             # 3. Batch Cancel
             if to_cancel:
@@ -330,16 +344,10 @@ class StandXMarketMaker:
 
     async def cancel_all(self):
         """Cancel all pending orders on shutdown."""
-        logger.info("Graceful Shutdown: Cancelling all pending orders...")
         async with self.lock:
              to_cancel = [info["id"] for info in self.pending_orders.values()]
              if to_cancel:
-                 # Standard batch cancel support needed in ws_client
-                 # Assuming ws_client.cancel_orders accepts list of ClientOrderIDs
                  try:
                      await self.ws.cancel_orders(to_cancel, self.symbol, is_client_id=True)
-                     logger.info(f"Sent cancel for {len(to_cancel)} orders.")
                  except Exception as e:
-                     logger.error(f"Failed to send cancel (Network down?): {e}")
-             else:
-                 logger.info("No pending orders to cancel.")
+                     logger.error(f"Cancel failed: {e}")

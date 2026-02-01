@@ -51,12 +51,24 @@
 ## 🏃‍♂️ 运行指南
 
 ### 1. 启动交易机器人
+**推荐方式 (后台运行)**：
+使用我们的新脚本，即使 SSH 断开，机器人也会在后台持续运行。
 ```bash
 ./run.sh
-# 或者手动运行:
-source venv/bin/activate
-python main.py
 ```
+- 查看日志：`tail -f bot.log`
+- 停止机器人：`pkill -f main.py`
+
+### 2. 参数配置
+在 `config.yaml` 中，您可以设置：
+- `grid.fill_cooldown_minutes`: 成交后暂停时间（默认 10 分钟）。
+- `system_watchdog`: 报警系统的超时和通知开关。
+
+### 3. 查看状态
+机器人运行时，在 Telegram 中发送 `/status` 可查看：
+-当前价格与持仓
+- **账户余额**（新增支持）
+- 挂单详情
 
 ### 2. 运行网络测试 (推荐在服务器部署前运行)
 检查您的服务器与 StandX 的连接稳定性。
@@ -69,6 +81,33 @@ python check_latency.py
 ```bash
 python start_monitor.py
 ```
+
+
+## ☁️ 服务器部署指南 (更新代码)
+
+如果您已经在服务器上运行了旧版本，请按以下步骤更新：
+
+1.  **拉取最新代码**:
+    ```bash
+    cd StandXMM-WS
+    git pull
+    ```
+
+2.  **更新配置文件**:
+    由于 `config.yaml` 已经被修改（包含新参数），您可能需要手动检查并合并配置：
+    ```bash
+    nano config.yaml
+    # 确保添加了 fill_cooldown_minutes: 30 等新参数
+    ```
+
+3.  **重启机器人**:
+    ```bash
+    # 先停止旧进程
+    pkill -f main.py
+    
+    # 启动新版（后台运行）
+    ./run.sh
+    ```
 
 ## ⚠️ 免责声明
 
