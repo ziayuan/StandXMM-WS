@@ -24,6 +24,7 @@ class StandXMarketMaker:
         
         # State
         self.last_price = 0.0
+        self.last_rebalance_price = 0.0 # Hysteresis anchor
         self.position_size = 0.0
         # pending_orders: Price -> {id: str, side: str, qty: str}
         self.pending_orders: Dict[float, dict] = {} 
@@ -44,7 +45,10 @@ class StandXMarketMaker:
             f"Position: `{self.position_size}`"
         ]
         
-        # Add Balance Info from WS subscription
+        if not self.balance_info:
+            # Trigger active fetch and wait briefly (best effort)
+            asyncio.create_task(self.ws.fetch_balance())
+            
         if self.balance_info:
             total = self.balance_info.get("total", "?")
             free = self.balance_info.get("free", "?")
@@ -237,8 +241,20 @@ class StandXMarketMaker:
             return
 
         async with self.lock:
-            # 1. Generate Target Grid
-            target_longs, target_shorts = self._generate_grid_prices(self.last_price)
+            # 0. Hysteresis Check (Noise Filter)
+            # Only shift the grid anchor if price moved significantly (> 0.5 * step)
+            # If not moved, we keep using the OLD anchor (last_rebalance_price).
+            # This prevents oscillating grid lines when price hovers near a step boundary.
+            if self.last_rebalance_price == 0:
+                self.last_rebalance_price = self.last_price
+            
+            diff = abs(self.last_price - self.last_rebalance_price)
+            if diff > (self.price_step * 0.5):
+                # Price moved enough to warrant a re-anchor
+                self.last_rebalance_price = self.last_price
+            
+            # 1. Generate Target Grid (Using STABLE anchor)
+            target_longs, target_shorts = self._generate_grid_prices(self.last_rebalance_price)
             
             # 2. Get Current Active orders (from local tracking or simple assumption)
             # In a robust system, we track `on_order_update`. 
@@ -281,10 +297,11 @@ class StandXMarketMaker:
             if to_cancel:
                 await self.ws.cancel_orders(to_cancel, self.symbol, is_client_id=True)
             
-            # 4. Batch/Seq Place
-            for order in to_place:
-                # Fire and forget (or await id)
-                await self._place_worker(order)
+            # 4. Batch/Seq Place -> Parallel
+            if to_place:
+                # Use asyncio.gather for parallel execution (High Performance)
+                tasks = [self._place_worker(order) for order in to_place]
+                await asyncio.gather(*tasks)
 
     async def _place_worker(self, order_def):
         try:
